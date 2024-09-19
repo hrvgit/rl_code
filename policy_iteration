@@ -1,0 +1,99 @@
+import numpy as np
+import sys
+from gym.envs.toy_text import discrete
+
+LEFT = 0
+RIGHT = 1
+
+class Gridworld1dEnv(discrete.DiscreteEnv):
+    def __init__(self):
+        self.shape = (10,)
+        self.start_state_index = 3
+        nS = 10
+        nA = 2
+        P = {}
+
+        for s in range(nS):
+            P[s] = {a: [] for a in range(nA)}
+            is_done = lambda s: s == 0 or s == (nS - 1)
+
+            if is_done(s):
+                P[s][LEFT] = [(1.0, s, 0, True)]
+                P[s][RIGHT] = [(1.0, s, 0, True)]
+            else:
+                reward = lambda s: 10.0 if s == 0 else -5.0 if s == (nS - 1) else -1.0
+                ns_left = s - 1
+                P[s][LEFT] = [(1.0, ns_left, reward(ns_left), is_done(ns_left))]
+                ns_right = s + 1
+                P[s][RIGHT] = [(1.0, ns_right, reward(ns_right), is_done(ns_right))]
+
+        isd = np.zeros(nS)
+        isd[self.start_state_index] = 1.0
+        super().__init__(nS, nA, P, isd)
+
+    def render(self, mode='human'):
+        outfile = sys.stdout
+        for s in range(self.nS):
+            if self.s == s:
+                output = " x "
+            elif s == 0 or s == self.shape[0] - 1:
+                output = " T "
+            else:
+                output = " o "
+            if s == 0:
+                output = output.lstrip()
+            if s == self.shape[0] - 1:
+                output = output.rstrip()
+            output += '\n'
+            outfile.write(output)
+        outfile.write('\n')
+
+def policy_eval(policy, env, discount_factor=1.0, epsilon=0.001):
+    V_old = np.zeros(env.nS)
+    while True:
+        V_new = np.zeros(env.nS)
+        delta = 0
+        for s in range(env.nS):
+            v_fn = 0
+            action_probabilities = policy[s]
+            for a in range(env.nA):
+                [(prob, next_state, reward, done)] = env.P[s][a]
+                v_fn += action_probabilities[a] * (reward + discount_factor * V_old[next_state])
+            delta = max(delta, abs(v_fn - V_old[s]))
+            V_new[s] = v_fn
+        V_old = V_new
+        if delta < epsilon:
+            break
+    return np.array(V_old)
+
+def policy_improvement(env, policy_eval_fn=policy_eval, discount_factor=1.0):
+    def one_step_lookahead(state, V):
+        A = np.zeros(env.nA)
+        for a in range(env.nA):
+            for prob, next_state, reward, done in env.P[state][a]:
+                A[a] += prob * (reward + discount_factor * V[next_state])
+        return A
+
+    policy = np.ones([env.nS, env.nA]) / env.nA
+    while True:
+        V = policy_eval_fn(policy, env, discount_factor)
+        policy_stable = True
+        for s in range(env.nS):
+            chosen_a = np.argmax(policy[s])
+            action_values = one_step_lookahead(s, V)
+            best_a = np.argmax(action_values)
+            if chosen_a != best_a:
+                policy_stable = False
+                policy[s] = np.eye(env.nA)[best_a]
+        if policy_stable:
+            break
+    return policy, V
+
+if __name__ == '__main__':
+    env = Gridworld1dEnv()
+    random_policy = np.ones([env.nS, env.nA]) / env.nA
+    v = policy_eval(random_policy, env)
+    print("Random policy value function: \n", v)
+    optimal_policy, v = policy_improvement(env)
+    print("Improved policy: \n", optimal_policy)
+    print("Value function: \n", v)
